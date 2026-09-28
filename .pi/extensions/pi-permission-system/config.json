@@ -1,29 +1,45 @@
 {
   "$schema": "https://raw.githubusercontent.com/gotgenes/pi-packages/main/packages/pi-permission-system/schemas/permissions.schema.json",
 
-
-  "yoloMode": true,
+  // ── auto 档 ────────────────────────────────────────────────────────
+  // 日常操作全自动（文件编辑、命令、项目外访问、skill、MCP），
+  // 只有"改 git 历史 / 对外发布"这类不可逆动作需要点头。
+  // yoloMode 必须为 false：全局是 true，开着的话下面所有 ask 都不会弹。
+  "yoloMode": false,
 
   "permission": {
-
+    // 编辑项目内文件不询问
     "write": "allow",
     "edit": "allow",
 
+    // 显式放开这三项继承自全局的 ask（全局是 ask）：
+    //   external_directory -> 访问项目目录之外的文件
+    //   skill              -> 调用 skill
+    //   mcp                -> 调用 MCP 工具
+    // path 层的 deny（*.env、*.env.*、~/.ssh/*）是跨切规则，不受这里影响，仍然拒绝。
+    "external_directory": "ask",
+    "skill": "allow",
+    "mcp": "allow",
 
     "bash": {
+      // 日常命令一律放行（测试、构建、安装依赖、git status/add/diff…）
       "*": "allow",
 
-
-      "sudo *": "ask",
-      "git reset --hard *": "ask",
-      "git clean *": "ask",
-      "git restore *": "ask",
-
+      // ── 需要点头的：改 git 历史 / 对外发布 ──
+      "git commit": "ask",
+      "git commit *": "ask",
       "git push": "ask",
       "git push *": "ask",
+      "gh release *": "ask",
+      "gh pr merge *": "ask",
       "npm publish": "ask",
       "npm publish *": "ask",
-      "npm version *": "ask"
+      "npm version *": "ask",
+
+      // ── 硬拒绝 ──
+      // 全局也是 deny，写在这里让它自解释；deny 不受 yoloMode 影响，
+      // 也不会被上面的 "*": "allow" 覆盖（匹配顺序：后者胜，而这条在 "*" 之后）。
+      "rm -rf *": "deny"
     }
   }
 }
