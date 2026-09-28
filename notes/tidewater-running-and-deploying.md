@@ -25,7 +25,7 @@
 ```text
                     ┌─ ① npm run dev ────────────> http://127.0.0.1:5189   （开发用，带热更新）
    一份源码 ────────┼─ ② npm run build + preview ─> http://127.0.0.1:4173   （验证发布产物）
-                    └─ ③ git push origin main ────> GitHub Actions ──> GitHub Pages（仓库自带，当前未启用）
+                    └─ ③ git push origin main ────> GitHub Actions ──> GitHub Pages（仓库自带 workflow，见 4.3）
 
                     └─ ④ python3 -m http.server -d dist   （无 Node 的最简部署，见 4.1）
 ```
@@ -37,7 +37,7 @@
 |---|---|---|---|
 | ① 开发服务器 | 需要 | 会热更新，改完刷新即可 | 读代码、改代码 |
 | ② 构建 + 预览 | 需要 | 需要重新构建 | 确认"发布版本能跑" |
-| ③ GitHub Pages | 只需要一次 push | 需要 push | 让别人也能玩（仓库自带 workflow，需先启用 Pages） |
+| ③ GitHub Pages | 只需要一次 push | 需要 push | 让别人也能玩（仓库自带 workflow，见 4.3） |
 | ④ 静态服务器 | 不需要 | 需要重新构建 | 只想有个本地地址能玩 |
 
 ---
@@ -168,9 +168,9 @@ Netlify / Vercel / Cloudflare Pages   构建命令 npm run build，发布目录 
 1. **通过 HTTP(S) 访问**，不要用 `file://` 直接打开 `dist/index.html`——ES 模块和资源加载在 `file://` 下会被浏览器拦截，结果是白屏。
 2. **提供 HTTPS**（或限制在 `localhost`）——见第 2 节的"安全上下文"约束。
 
-### 4.3 仓库自带的 GitHub Pages workflow（可选，当前未启用）
+### 4.3 仓库自带的 GitHub Pages workflow
 
-仓库里有 `.github/workflows/deploy.yml`，所以以后想发到公网时链路是现成的：
+仓库里有 `.github/workflows/deploy.yml`，想发到公网时链路是现成的：
 
 ```text
 触发：push 到 main，或在 Actions 页面手动触发（workflow_dispatch）
@@ -183,19 +183,33 @@ Netlify / Vercel / Cloudflare Pages   构建命令 npm run build，发布目录 
 
 产物使用相对路径，所以放在 `https://<用户名>.github.io/<仓库名>/` 这样的子路径下也能正确加载。
 
-**当前状态（实测）**：该仓库尚未启用 Pages，因此 push 触发的运行会在 `configure-pages` 这一步失败：
+**两个必要条件**（都是仓库设置，`git push` 无法代替）：
+
+1. `Settings -> Pages -> Build and deployment -> Source` 必须是 **GitHub Actions**。
+   未启用 Pages 时 `configure-pages` 会直接失败，后面的 `upload-pages-artifact` 与 `deploy` 全部 skipped。
+2. Source 不能停在 **Deploy from a branch**：那会让 GitHub 用 `jekyll-build-pages` 直接发布仓库根目录，
+   站点上是**源码而不是构建产物**，症状很容易误判：
 
 ```text
-Actions run（push 到 main 触发）: build job
-    4  Run npm ci                  -> success
-    5  Run npm run build           -> success
-    6  Run actions/configure-pages -> failure   <- 仓库未启用 Pages
-    7  Run upload-pages-artifact   -> skipped
-  deploy job                       -> skipped
+/                  -> 200  但 index.html 与仓库根目录的同一份文件逐字节一致（没经过 vite build）
+/src/main.js       -> 200  源码在对外服务
+/package.json      -> 200  整个仓库根被当作站点
+/assets/index-*.js -> 404  构建产物根本不在站点上
+/models/... /audio/... /clouds/... /ui/...  -> 404
 ```
 
-要用它，先做一次性设置：`Settings -> Pages -> Build and deployment -> Source: GitHub Actions`，
-然后到 Actions 页面 Run workflow（或再 push 一次）。这一步是仓库设置，`git push` 无法代替。
+模型和音频 404 的原因不是路径写错：代码里资源 URL 走 `import.meta.env.BASE_URL`（见 `src/world/marine/Whale.js`、`src/audio/SoundScape.js`），
+而 `import.meta.env` 是构建工具注入的，源码模式下它不存在，于是 fallback 到 `'/'`，请求落到了域名根而不是仓库子路径。
+结论：页面能加载 HTML 和 JS，但游戏起不来。
+
+设置正确后，到 Actions 页面 Run workflow（或再 push 一次）即可完成部署。
+
+**怎么自查站点上的是哪一版**：
+
+```text
+GET /assets/index-*.js   200 = 构建产物（正确）
+GET /src/main.js         404 = 构建产物（正确）；200 = 正在发布源码（Source 选错了）
+```
 
 ---
 
@@ -257,7 +271,7 @@ npm test         2.5s，全部通过
 
 GitHub Actions（push 到 main 触发）
                  build job: npm ci 与 npm run build 均成功
-                 configure-pages: 失败（该仓库尚未启用 Pages，见 4.3）
+                 configure-pages: 在仓库未启用 Pages 时失败；Source 选成分支部署时会发布源码而不是构建产物（见 4.3）
 ```
 
 `npm test` 的两条命令对应两种验证：玩法逻辑不需要 GPU（可以在任何机器、任何 CI 上跑），引擎冒烟需要无头 WebGPU（用 `webgpu` 包提供的 Dawn 实现，见 `test/headless.mjs`）。
@@ -270,7 +284,7 @@ GitHub Actions（push 到 main 触发）
 本地开发：      npm ci && npm run dev              -> http://127.0.0.1:5189
 本地玩发布版：  npm run build && npm run preview   -> http://127.0.0.1:4173
 最简部署：      python3 -m http.server 8000 -d dist -> http://127.0.0.1:8000
-发布公网：      git push origin main              -> 仓库自带的 Pages workflow（需先启用 Pages）
+发布公网：      git push origin main              -> 仓库自带的 Pages workflow（Source 需为 GitHub Actions，见 4.3）
 
 只有两条硬约束：必须是 HTTP(S)（不是 file://），而且必须是安全上下文（https 或 localhost）。
 ```
