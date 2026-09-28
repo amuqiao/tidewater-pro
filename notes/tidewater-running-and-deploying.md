@@ -25,7 +25,7 @@
 ```text
                     ┌─ ① npm run dev ────────────> http://127.0.0.1:5189   （开发用，带热更新）
    一份源码 ────────┼─ ② npm run build + preview ─> http://127.0.0.1:4173   （验证发布产物）
-                    └─ ③ git push origin main ────> GitHub Actions ──> GitHub Pages（仓库自带 workflow，见 4.3）
+                    └─ ③ git push origin main ────> GitHub Actions ──> GitHub Pages（仓库自带 workflow，见 4.4）
 
                     └─ ④ python3 -m http.server -d dist   （无 Node 的最简部署，见 4.1）
 ```
@@ -37,7 +37,7 @@
 |---|---|---|---|
 | ① 开发服务器 | 需要 | 会热更新，改完刷新即可 | 读代码、改代码 |
 | ② 构建 + 预览 | 需要 | 需要重新构建 | 确认"发布版本能跑" |
-| ③ GitHub Pages | 只需要一次 push | 需要 push | 让别人也能玩（仓库自带 workflow，见 4.3） |
+| ③ GitHub Pages | 只需要一次 push | 需要 push | 让别人也能玩（仓库自带 workflow，见 4.4） |
 | ④ 静态服务器 | 不需要 | 需要重新构建 | 只想有个本地地址能玩 |
 
 ---
@@ -79,6 +79,8 @@ curl 检查      ->  HTTP 200
 
 **端口说明（容易困惑的一点）**：`vite.config.js` 里写的是 `server.port: 5188`，但 `package.json` 的 `dev` 脚本带了 `--port 5189`，命令行优先，所以实际端口是 **5189**。
 另外该配置开了 `strictPort: true`：端口被占用时开发服务器会直接报错退出，而不是自动换一个端口。
+
+开发服务器是前台进程，在跑它的终端里按 `Ctrl+C` 就能停；后台进程、`preview` 与 Python 服务的停止方式见 4.2。
 
 ### 3.2 玩之前先知道的三件事
 
@@ -144,18 +146,47 @@ python3 -m http.server 8000 -d dist    # http://127.0.0.1:8000/
 
 **关于局域网访问**：`python3 -m http.server` 默认监听所有网卡，同一局域网的其它设备可以用 `http://<本机 IP>:8000/` 打开——
 但**WebGPU 需要安全上下文，而这个地址不是 https**，浏览器会拒绝提供 WebGPU，游戏起不来。
-要跨设备玩，请给服务配一层 HTTPS（反向代理 + 自签证书），或使用 4.2 的托管服务。
+要跨设备玩，请给服务配一层 HTTPS（反向代理 + 自签证书），或使用 4.3 的托管服务。
 
-**停止服务**：前台运行时 `Ctrl+C`；后台启动的先找进程再结束：
+### 4.2 停止本地服务
+
+上面几种启动方式都是前台进程，停止方法一致：在运行它的那个终端里按 `Ctrl+C`。
+
+| 启动命令 | 端口 | 停止 |
+|---|---|---|
+| `npm run dev` | 5189 | 终端里 `Ctrl+C` |
+| `npm run preview` | 4173 | 终端里 `Ctrl+C` |
+| `python3 -m http.server 8000 -d dist` | 8000 | 终端里 `Ctrl+C` |
+
+三种常见卡住的情况：
 
 ```sh
-pgrep -fl "vite preview"    # 找到 PID
-kill <PID>
+# ① 终端已关掉、或用 nohup / & 在后台启动：Ctrl+C 对它无效，要按进程号结束
+pgrep -fl "vite"            # 列出 Vite 的服务进程（dev 与 preview 都匹配）
+pgrep -fl "http.server"     # Python 的静态服务
+kill <PID>                  # 换成上面查到的进程号
+
+# ② kill 之后端口仍在监听：先确认进程号没搞错，再用一次强杀
+kill -9 <PID>
 ```
 
-### 4.2 部署到任意静态托管
+确认端口真的空了（两种都行）：
 
-因为产物是纯静态、且使用相对路径（见 3.4 的 `base: './'`），`dist/` 整个目录可以直接交给任何静态托管：
+```sh
+curl -s -o /dev/null -w "%{http_code}\n" --max-time 3 http://127.0.0.1:4173/   # 000 = 连不上，已停
+lsof -nP -iTCP:4173 -sTCP:LISTEN                                                # 无输出 = 已停
+```
+
+几个要点：
+
+- 停止本地服务**不影响**已部署的线上站点，两者互不相干。
+- `Ctrl+C` 只作用于当前终端的前台进程；在另一个窗口启动的服务要在那个窗口停，或按 PID 结束。
+- 关掉终端窗口一般会带走它的子进程，但用 `nohup` / `&` 起的不会，必须按 PID 处理。
+- 端口被占用时 `npm run dev` 会直接报错（`strictPort`），这通常意味着上一次的服务还在跑：先按上面的方式停掉它。
+
+### 4.3 部署到任意静态托管
+
+因为产物是纯静态、且使用相对路径（`vite.config.js` 的 `base: './'`），`dist/` 整个目录可以直接交给任何静态托管：
 
 ```text
 Netlify / Vercel / Cloudflare Pages   构建命令 npm run build，发布目录 dist
@@ -168,7 +199,7 @@ Netlify / Vercel / Cloudflare Pages   构建命令 npm run build，发布目录 
 1. **通过 HTTP(S) 访问**，不要用 `file://` 直接打开 `dist/index.html`——ES 模块和资源加载在 `file://` 下会被浏览器拦截，结果是白屏。
 2. **提供 HTTPS**（或限制在 `localhost`）——见第 2 节的"安全上下文"约束。
 
-### 4.3 仓库自带的 GitHub Pages workflow
+### 4.4 仓库自带的 GitHub Pages workflow
 
 仓库里有 `.github/workflows/deploy.yml`，想发到公网时链路是现成的：
 
@@ -211,6 +242,20 @@ GET /assets/index-*.js   200 = 构建产物（正确）
 GET /src/main.js         404 = 构建产物（正确）；200 = 正在发布源码（Source 选错了）
 ```
 
+#### 下线已发布的站点
+
+停止对外发布和停止自动部署是两件事：
+
+```text
+只停自动部署：  删除或改名 .github/workflows/deploy.yml
+                -> 以后 push 不再部署，但线上还是最后一次部署的内容
+下线当前站点：  Settings -> Pages -> 在 "Your site is live at ..." 右侧点 “...” -> Unpublish site
+                -> 当前部署被删除，站点立刻变成 404（设置与仓库内容不受影响，可随时重新发布）
+```
+
+如果连 Pages 配置本身也要清掉（`Unpublish site` 之后 `GET /repos/{owner}/{repo}/pages` 仍会返回配置），
+需要带认证调用 REST API：`DELETE /repos/{owner}/{repo}/pages`。
+
 ---
 
 ## 5. 验证部署是否成功
@@ -242,7 +287,7 @@ GET /src/main.js         404 = 构建产物（正确）；200 = 正在发布源�
 
 | 症状 | 最可能的原因 | 处理 |
 |---|---|---|
-| 页面白屏，控制台有模块/资源加载错误 | 用 `file://` 打开了 `index.html` | 用第 4.1 或 4.2 节的静态服务方式提供 |
+| 页面白屏，控制台有模块/资源加载错误 | 用 `file://` 打开了 `index.html` | 用第 4.1 或 4.3 节的静态服务方式提供 |
 | 控制台报 `WebGPU is not available in this browser.` | 浏览器太旧，或页面不在安全上下文（http 非 localhost） | 换新版 Chrome/Edge/Safari；改用 https 或 localhost |
 | 报 `No WebGPU adapter found.` | 浏览器支持 WebGPU 但拿不到适配器（硬件加速被关、驱动问题、虚拟机） | 打开 `chrome://gpu` 看 WebGPU 状态；开启浏览器硬件加速；换机器 |
 | 加载画面停住不动 | 首次着色器编译（可能一两分钟）；或设备丢失 | 等；看控制台是否有 `WebGPU device lost` 或 `uncapturederror` 输出 |
@@ -271,7 +316,7 @@ npm test         2.5s，全部通过
 
 GitHub Actions（push 到 main 触发）
                  build job: npm ci 与 npm run build 均成功
-                 configure-pages: 在仓库未启用 Pages 时失败；Source 选成分支部署时会发布源码而不是构建产物（见 4.3）
+                 configure-pages: 在仓库未启用 Pages 时失败；Source 选成分支部署时会发布源码而不是构建产物（见 4.4）
 ```
 
 `npm test` 的两条命令对应两种验证：玩法逻辑不需要 GPU（可以在任何机器、任何 CI 上跑），引擎冒烟需要无头 WebGPU（用 `webgpu` 包提供的 Dawn 实现，见 `test/headless.mjs`）。
@@ -284,7 +329,7 @@ GitHub Actions（push 到 main 触发）
 本地开发：      npm ci && npm run dev              -> http://127.0.0.1:5189
 本地玩发布版：  npm run build && npm run preview   -> http://127.0.0.1:4173
 最简部署：      python3 -m http.server 8000 -d dist -> http://127.0.0.1:8000
-发布公网：      git push origin main              -> 仓库自带的 Pages workflow（Source 需为 GitHub Actions，见 4.3）
+发布公网：      git push origin main              -> 仓库自带的 Pages workflow（Source 需为 GitHub Actions，见 4.4）
 
 只有两条硬约束：必须是 HTTP(S)（不是 file://），而且必须是安全上下文（https 或 localhost）。
 ```
