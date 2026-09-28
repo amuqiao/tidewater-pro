@@ -25,9 +25,9 @@
 ```text
                     ┌─ ① npm run dev ────────────> http://127.0.0.1:5189   （开发用，带热更新）
    一份源码 ────────┼─ ② npm run build + preview ─> http://127.0.0.1:4173   （验证发布产物）
-                    └─ ③ git push origin main ────> GitHub Actions ──> GitHub Pages（公网）
+                    └─ ③ git push origin main ────> GitHub Actions ──> GitHub Pages（仓库自带，当前未启用）
 
-                    └─ ④ python3 -m http.server -d dist   （无 Node 的最简部署，见 4.3）
+                    └─ ④ python3 -m http.server -d dist   （无 Node 的最简部署，见 4.1）
 ```
 
 四条通道产出的是同一样东西：**一堆静态文件**。这个项目没有后端、没有数据库、没有服务端渲染——所有计算（物理、海浪、天气）都在浏览器里跑，进度存在浏览器的 `localStorage`。
@@ -37,7 +37,7 @@
 |---|---|---|---|
 | ① 开发服务器 | 需要 | 会热更新，改完刷新即可 | 读代码、改代码 |
 | ② 构建 + 预览 | 需要 | 需要重新构建 | 确认"发布版本能跑" |
-| ③ GitHub Pages | 只需要一次 push | 需要 push | 让别人也能玩 |
+| ③ GitHub Pages | 只需要一次 push | 需要 push | 让别人也能玩（仓库自带 workflow，需先启用 Pages） |
 | ④ 静态服务器 | 不需要 | 需要重新构建 | 只想有个本地地址能玩 |
 
 ---
@@ -52,7 +52,7 @@
 | **不需要** Python、数据库、后端服务 | 整个游戏是纯静态的 |
 
 一条容易被忽略的硬约束：**WebGPU 只在"安全上下文"里可用**，也就是 `https://` 或 `localhost` / `127.0.0.1`。
-这决定了第 4.3 节里"局域网访问"为什么不直接可行。
+这决定了第 4.1 节里"局域网访问"为什么不直接可行。
 
 ---
 
@@ -128,50 +128,34 @@ npm run preview -- --port 5189
 
 ## 4. 部署
 
-### 4.1 目标一：GitHub Pages（仓库里已经配好了自动化）
+### 4.1 最简部署：把 `dist/` 用 HTTP 提供出去
 
-仓库里有 `.github/workflows/deploy.yml`，它的逻辑是：
-
-```text
-触发：push 到 main 分支，或在 Actions 页面手动触发（workflow_dispatch）
-   │
-   ├─ build job:  checkout -> setup-node 22（带 npm 缓存）-> npm ci -> npm run build
-   │              -> configure-pages -> upload-pages-artifact( path: dist )
-   │
-   └─ deploy job: 需要 build 成功 -> environment: github-pages -> actions/deploy-pages
-```
-
-所以部署 = **把代码 push 到 `main`**：
+`npm run build` 之后，`dist/` 本身就是一个可以部署的完整站点。两种等价做法：
 
 ```sh
-git push origin main
+# 有 Node：用 Vite 自带的静态服务
+npm run preview                        # http://127.0.0.1:4173/
+
+# 没有 Node 也行：用 Python 起一个静态服务
+python3 -m http.server 8000 -d dist    # http://127.0.0.1:8000/
 ```
 
-发布地址遵循 GitHub Pages 的规则：`https://<用户名>.github.io/<仓库名>/`。
-`vite.config.js` 里的 `base: './'` 就是为了这个场景——产物使用相对路径，因此无论仓库被放在站点的根目录还是子路径（`/tidewater-pro/`）都能正确加载。
+两者只是实现不同，产物和效果一样：把 `dist/` 通过 HTTP 暴露给浏览器。
 
-**一次性设置（必须做一次，否则 deploy 步骤会失败）**：
+**关于局域网访问**：`python3 -m http.server` 默认监听所有网卡，同一局域网的其它设备可以用 `http://<本机 IP>:8000/` 打开——
+但**WebGPU 需要安全上下文，而这个地址不是 https**，浏览器会拒绝提供 WebGPU，游戏起不来。
+要跨设备玩，请给服务配一层 HTTPS（反向代理 + 自签证书），或使用 4.2 的托管服务。
 
-```text
-GitHub 仓库 -> Settings -> Pages -> Build and deployment -> Source: GitHub Actions
+**停止服务**：前台运行时 `Ctrl+C`；后台启动的先找进程再结束：
+
+```sh
+pgrep -fl "vite preview"    # 找到 PID
+kill <PID>
 ```
 
-这一步是仓库设置，`git push` 无法代劳。未启用时，`build` job 会正常通过（产物也上传了），但 `deploy` job 会报错找不到 Pages 站点。
-启用后到 Actions 页面重新跑一次（选择该 workflow -> Run workflow），或再 push 一次即可。
+### 4.2 部署到任意静态托管
 
-**本仓库的实际情况（写文档时的实测）**：
-
-```text
-git remote -v      ->  origin  git@github.com:amuqiao/tidewater-pro.git
-git push --dry-run ->  可推送（960ccbb..cc0aaf8  main -> main）
-https://amuqiao.github.io/tidewater-pro/  ->  HTTP 404（表示该地址还没有部署内容）
-```
-
-也就是说：代码推送链路是通的，公网地址需要等 Pages 启用并完成一次部署后才会有内容。
-
-### 4.2 目标二：任意静态托管
-
-因为产物是纯静态、且使用相对路径，`dist/` 整个目录可以直接交给任何静态托管：
+因为产物是纯静态、且使用相对路径（见 3.4 的 `base: './'`），`dist/` 整个目录可以直接交给任何静态托管：
 
 ```text
 Netlify / Vercel / Cloudflare Pages   构建命令 npm run build，发布目录 dist
@@ -184,20 +168,34 @@ Netlify / Vercel / Cloudflare Pages   构建命令 npm run build，发布目录 
 1. **通过 HTTP(S) 访问**，不要用 `file://` 直接打开 `dist/index.html`——ES 模块和资源加载在 `file://` 下会被浏览器拦截，结果是白屏。
 2. **提供 HTTPS**（或限制在 `localhost`）——见第 2 节的"安全上下文"约束。
 
-### 4.3 目标三：不用 Node 的本地静态服务
+### 4.3 仓库自带的 GitHub Pages workflow（可选，当前未启用）
 
-如果只想有个地址能玩，`dist/` 已经构建好之后，用 Python 起一个静态服务就够了：
+仓库里有 `.github/workflows/deploy.yml`，所以以后想发到公网时链路是现成的：
 
-```sh
-python3 -m http.server 8000 -d dist
-# 打开 http://127.0.0.1:8000/
+```text
+触发：push 到 main，或在 Actions 页面手动触发（workflow_dispatch）
+   │
+   ├─ build job:  checkout -> setup-node 22（带 npm 缓存）-> npm ci -> npm run build
+   │              -> configure-pages -> upload-pages-artifact( path: dist )
+   │
+   └─ deploy job: 需要 build 成功 -> environment: github-pages -> actions/deploy-pages
 ```
 
-这对 Python 使用者是最省事的一条路：不需要 Node 运行时，只需要一次构建产物。
+产物使用相对路径，所以放在 `https://<用户名>.github.io/<仓库名>/` 这样的子路径下也能正确加载。
 
-**关于局域网访问**：`python3 -m http.server` 默认监听所有网卡，所以同一局域网的其他设备可以通过 `http://<本机 IP>:8000/` 访问——
-但**WebGPU 需要安全上下文，而这个地址不是 https**，浏览器会拒绝提供 WebGPU，游戏起不来。
-要在手机或另一台机器上玩，请用 4.1 的公网部署，或给内网服务配一层 HTTPS（反向代理 + 自签证书）。
+**当前状态（实测）**：该仓库尚未启用 Pages，因此 push 触发的运行会在 `configure-pages` 这一步失败：
+
+```text
+Actions run（push 到 main 触发）: build job
+    4  Run npm ci                  -> success
+    5  Run npm run build           -> success
+    6  Run actions/configure-pages -> failure   <- 仓库未启用 Pages
+    7  Run upload-pages-artifact   -> skipped
+  deploy job                       -> skipped
+```
+
+要用它，先做一次性设置：`Settings -> Pages -> Build and deployment -> Source: GitHub Actions`，
+然后到 Actions 页面 Run workflow（或再 push 一次）。这一步是仓库设置，`git push` 无法代替。
 
 ---
 
@@ -230,7 +228,7 @@ python3 -m http.server 8000 -d dist
 
 | 症状 | 最可能的原因 | 处理 |
 |---|---|---|
-| 页面白屏，控制台有模块/资源加载错误 | 用 `file://` 打开了 `index.html` | 用第 3.3 或 4.3 节的静态服务方式提供 |
+| 页面白屏，控制台有模块/资源加载错误 | 用 `file://` 打开了 `index.html` | 用第 4.1 或 4.2 节的静态服务方式提供 |
 | 控制台报 `WebGPU is not available in this browser.` | 浏览器太旧，或页面不在安全上下文（http 非 localhost） | 换新版 Chrome/Edge/Safari；改用 https 或 localhost |
 | 报 `No WebGPU adapter found.` | 浏览器支持 WebGPU 但拿不到适配器（硬件加速被关、驱动问题、虚拟机） | 打开 `chrome://gpu` 看 WebGPU 状态；开启浏览器硬件加速；换机器 |
 | 加载画面停住不动 | 首次着色器编译（可能一两分钟）；或设备丢失 | 等；看控制台是否有 `WebGPU device lost` 或 `uncapturederror` 输出 |
@@ -256,6 +254,10 @@ npm run preview  -> http://127.0.0.1:4173/                    (HTTP 200)
 npm test         2.5s，全部通过
                  game-logic: "all passed"
                  engine-smoke: stats { draws: 12, triangles: 7386, pipelines: 8 }
+
+GitHub Actions（push 到 main 触发）
+                 build job: npm ci 与 npm run build 均成功
+                 configure-pages: 失败（该仓库尚未启用 Pages，见 4.3）
 ```
 
 `npm test` 的两条命令对应两种验证：玩法逻辑不需要 GPU（可以在任何机器、任何 CI 上跑），引擎冒烟需要无头 WebGPU（用 `webgpu` 包提供的 Dawn 实现，见 `test/headless.mjs`）。
@@ -265,10 +267,10 @@ npm test         2.5s，全部通过
 ## 8. 一句话总结
 
 ```text
-本地玩：      npm ci && npm run dev              -> http://127.0.0.1:5189
-验证发布版：  npm run build && npm run preview   -> http://127.0.0.1:4173
-发布公网：    git push origin main               -> GitHub Pages（需先启用 Pages）
-最简部署：    python3 -m http.server -d dist     -> http://127.0.0.1:8000
+本地开发：      npm ci && npm run dev              -> http://127.0.0.1:5189
+本地玩发布版：  npm run build && npm run preview   -> http://127.0.0.1:4173
+最简部署：      python3 -m http.server 8000 -d dist -> http://127.0.0.1:8000
+发布公网：      git push origin main              -> 仓库自带的 Pages workflow（需先启用 Pages）
 
 只有两条硬约束：必须是 HTTP(S)（不是 file://），而且必须是安全上下文（https 或 localhost）。
 ```
