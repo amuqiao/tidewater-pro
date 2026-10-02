@@ -146,7 +146,7 @@ Every push to `main` deploys to GitHub Pages through `.github/workflows/deploy.y
 | `src/audio/` | The sample-based soundscape |
 | `src/ui/` | Settings panel, loading screen and HUD |
 | `tools/` | Scripts that fetch and convert the characters, stall props and fishing sounds |
-| `notes/` | Reading notes in Chinese: project overview, rendering walkthrough, and a run / deploy guide (start at [notes/README.md](notes/README.md)) |
+| `notes/` | Reading notes in Chinese for developers coming from Python with no game/graphics background: project overview, WebGPU and the engine, rendering and post-processing, ocean and sky, gameplay systems, world and asset pipeline, dev workflow, a staged learning path and a glossary (start at [notes/README.md](notes/README.md)) |
 | `test/` | Headless engine smoke test and game-logic tests (`npm test`), and HUD / loader dev pages |
 
 ## Credits and license
